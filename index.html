@@ -1,0 +1,665 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pixel Wall</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #141a2e; }
+  body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #eef2f8; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; width: 100vw; height: 100vh; height: 100dvh; touch-action: none; cursor: crosshair; }
+  .hud { position: fixed; pointer-events: none; text-shadow: 0 1px 3px #000a; }
+  #net { top: max(10px, env(safe-area-inset-top)); left: 14px; font-size: 12px; opacity: .8; }
+  #saved { top: calc(max(10px, env(safe-area-inset-top)) + 18px); left: 14px; font-size: 12px; opacity: 0; transition: opacity .5s; }
+  #saved.on { opacity: .8; }
+  #theme { top: max(10px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); padding: 6px 14px; border-radius: 999px; background: #ffd23f; color: #2a1d00;
+           font-weight: 800; font-size: 14px; text-shadow: none; white-space: nowrap; max-width: 52vw; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 3px 10px #0006; }
+  #side { position: fixed; top: max(8px, env(safe-area-inset-top)); right: max(10px, env(safe-area-inset-right)); display: flex; flex-direction: column; gap: 8px; }
+  #side button { width: 44px; height: 44px; border-radius: 12px; border: 1px solid #ffffff33; background: #1f2945dd; color: #fff; font: 700 20px system-ui, sans-serif; cursor: pointer; }
+  #dock { position: fixed; left: 50%; transform: translateX(-50%); bottom: max(10px, env(safe-area-inset-bottom)); display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  #wait { padding: 4px 12px; border-radius: 999px; background: #1f2945dd; font-size: 13px; font-weight: 700; min-width: 120px; text-align: center; position: relative; overflow: hidden; }
+  #wait i { position: absolute; left: 0; top: 0; bottom: 0; background: #4cc38a55; }
+  #wait span { position: relative; }
+  #pal { display: grid; grid-template-columns: repeat(16, 36px); gap: 3px; padding: 5px; border-radius: 14px; background: #1f2945dd; }
+  #pal button { width: 36px; height: 36px; border-radius: 8px; border: 2px solid #0005; cursor: pointer; padding: 0; transition: transform .1s; }
+  #pal button.on { border: 3px solid #fff; transform: translateY(-3px); box-shadow: 0 3px 8px #0008; }
+  @media (max-width: 640px) { #pal { grid-template-columns: repeat(8, 44px); } #pal button { width: 44px; height: 44px; }
+    #net, #saved { left: 50%; transform: translateX(-50%); white-space: nowrap; top: calc(max(10px, env(safe-area-inset-top)) + 42px); } #saved { top: calc(max(10px, env(safe-area-inset-top)) + 60px); } }
+  #hint { top: 22%; left: 16px; right: 16px; text-align: center; font-size: 17px; font-weight: 700; transition: opacity .8s; }
+  #toast { top: 30%; left: 16px; right: 16px; text-align: center; font-size: 18px; font-weight: 800; color: #ffd23f; opacity: 0; transition: opacity .4s; }
+  #toast.on { opacity: 1; }
+  #over { position: fixed; inset: 0; display: grid; place-items: center; background: #0b1020b0; }
+  #over[hidden] { display: none; }
+  .card { width: min(340px, 88vw); padding: 22px; border-radius: 16px; background: #1b2440; border: 1px solid #ffffff22; text-align: center; }
+  .card h2 { margin: 0 0 4px; font-size: 24px; }
+  .card ol { text-align: left; margin: 14px 0; padding-left: 26px; font-size: 14px; min-height: 40px; }
+  .card li span { float: right; font-variant-numeric: tabular-nums; }
+  button.go { width: 100%; min-height: 48px; border: 0; border-radius: 12px; background: #4cc38a; color: #08130d; font: 700 17px system-ui, sans-serif; cursor: pointer; }
+  .attract .hud, .attract #side, .attract #dock { display: none !important; }
+</style>
+<script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div class="hud" id="net">Connecting…</div>
+<div class="hud" id="saved">✓ Wall saved</div>
+<div class="hud" id="theme"></div>
+<div class="hud" id="hint"></div>
+<div class="hud" id="toast"></div>
+<div id="side"><button id="boardBtn" title="Top painters">🏆</button><button id="zin" title="Zoom in">+</button><button id="zout" title="Zoom out">−</button></div>
+<div id="dock"><div id="wait"><i></i><span>Ready</span></div><div id="pal"></div></div>
+<div id="over" hidden>
+  <div class="card">
+    <h2>Top painters</h2>
+    <div id="mine"></div>
+    <ol id="board"><li>Loading the leaderboard…</li></ol>
+    <button class="go" id="back">Back to the wall</button>
+  </div>
+</div>
+<script>
+/* ═══ PIXEL WALL · a Multiplayer Agent starter ════════════════════════════════════════
+ * One shared canvas, one pixel at a time. Drop-in, 2–30 players; bots paint little pictures.
+ *
+ * WHERE THINGS ARE (search for the "── " headers):
+ *   CONFIG ........ wall size, wait between pixels, palette, bots, and the pictures bots paint
+ *   CONNECTION .... MP_CONNECT, joining, the offline room, who is host, live ops
+ *   WORLD MEMORY .. how the wall survives the room emptying (same code in every starter)
+ *   WALL .......... how rows are stored, what everyone sees, painting a pixel
+ *   WALL (HOST) ... checking paints, writing rows, bots
+ *   DRAW .......... camera, the wall, pops, everyone's cursors
+ *   HUD & BOARD ... palette, wait bar, theme banner, top painters
+ *   INPUT ......... click/tap to paint, drag to move, wheel/pinch/buttons to zoom
+ *
+ * HOW THE MULTIPLAYER WORKS (a relay room: no server code):
+ *   - Each player writes its OWN entity: `cur` (one JSON field: where its cursor is) up to
+ *     10 times a second, `hb` (heartbeat) once a second, and `n`/`h` (name, color) once.
+ *   - The HOST is the lowest sessionId among live players (heartbeat seen in the last
+ *     3s), worked out every frame. Only the host writes the shared fields: `row0`…`row63`
+ *     (one letter per pixel, a–p = palette color), `rev` (how many pixels people have
+ *     placed) and `bots`. A new host adopts all of it from state.
+ *   - Everyone else sends one intent: "paint" {x, y, c}. The host checks the wait
+ *     between pixels and writes the row. Your pixel shows at once until the row comes back.
+ *   - Live ops (no code): live config `cooldownMs`, `palette` (16 colors) and `theme`
+ *     (the banner); an active live event's title shows in the banner too.
+ *   - The wall outlives the room through WORLD MEMORY (see that section).
+ *   - ?attract plays offline with bots only (the preview video is recorded from it).
+ *   - Leaderboard "pixels": pixels each player has placed, all time.
+ */
+
+// ── CONFIG ──────────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  size: 64,               // the wall is size × size pixels, one shared field per row
+  cooldownMs: 2000,       // wait between your pixels (live config: cooldownMs)
+  theme: "Paint anything you like", // the banner (live config: theme)
+  palette: ["#ffffff", "#e4e4e4", "#888888", "#222222", "#ffa7d1", "#e50000", "#e59500", "#a06a42",
+            "#e5d900", "#94e044", "#02be01", "#00d3dd", "#0083c7", "#0000ea", "#cf6ee4", "#820080"], // 16 colors (live config: palette)
+  seats: 4,               // bots fill the room up to this many painters
+  botCooldownMs: 900,     // a bot's wait between pixels
+  botFill: 0.55,          // bots stop starting pictures once this share of the wall is painted
+  rowsPerFlush: 5,        // most rows the host writes at once (5 times a second)
+  board: "pixels",        // leaderboard name
+  saveNs: "pixel-wall",   // player-save namespace for world memory
+  saveEvery: 10000,       // ms between world-memory saves
+};
+const LETTERS = "abcdefghijklmnop"; // palette index -> the letter stored in a row ("a" = white, the blank wall)
+// The pictures bots paint, in palette letters ("." = leave it).
+const MOTIFS = {
+  heart: [".ff.ff.", "fffffff", "fffffff", ".fffff.", "..fff..", "...f..."],
+  star: ["...i...", "..iii..", "iiiiiii", ".iiiii.", ".ii.ii.", "i.....i"],
+  smiley: [".iiiii.", "iididii", "iiiiiii", "idiiidi", "iidddii", ".iiiii."],
+  mushroom: ["..fff..", ".fafaf.", "fffffff", "fafffaf", "..bbb..", "..bbb.."],
+  tree: ["..kkk..", ".kkjkk.", "kkkjkkk", ".kkkkk.", "...h...", "...h..."],
+  invader: ["..j.....j..", "...j...j...", "..jjjjjjj..", ".jj.jjj.jj.", "jjjjjjjjjjj", "j.jjjjjjj.j", "j.j.....j.j", "...jj.jj..."],
+  flower: [".eee.", "eeiee", ".eee.", "..k..", ".kk..", "..k.."],
+  sun: ["g..g..g", ".giiig.", ".iiiii.", "giiiiig", ".iiiii.", ".giiig.", "g..g..g"],
+  ghost: ["..lll..", ".lllll.", "laalaal", "lanlanl", "lllllll", "lllllll", "l.l.l.l"],
+};
+const BOT_NAMES = ["Pixie", "Dot", "Bitsy", "Sprite", "Inky", "Mosaic", "Tiles", "Speck"];
+const CURSOR_COLORS = ["#ff4d6d", "#4da6ff", "#ffd23f", "#52d273", "#c77dff", "#ff8c42", "#3de0d0", "#ff6fb5"];
+
+// ── CONNECTION ──────────────────────────────────────────────────────────────────────
+// The builder fills these in for this game. Downloaded from GitHub? Put your own pk_ key here.
+const MP_CONNECT = {
+  key: 'pk_REPLACE_ME',
+  room: 'pixel-wall',
+  endpoint: 'wss://live.multiplayeragent.com',
+  apiUrl: 'https://api.multiplayeragent.com',
+};
+const ATTRACT = new URLSearchParams(location.search).has("attract");
+
+/** Same shape as the SDK client, kept in this tab: offline play and ?attract. */
+function localRoom() {
+  const id = "local", state = { entities: { players: { [id]: {} } }, shared: {} }, subs = [];
+  let queued = false;
+  const emit = () => { if (!queued) { queued = true; queueMicrotask(() => { queued = false; subs.forEach((f) => f(state)); }); } };
+  const put = (o, k, v) => { if (typeof k === "object") Object.assign(o, k); else o[k] = v; emit(); };
+  return {
+    sessionId: id, state, offline: true, live: { config: {}, active: [] },
+    me: { set: (k, v) => put(state.entities.players[id], k, v) },
+    setShared: (k, v) => put(state.shared, k, v),
+    onState: (f) => { subs.push(f); f(state); }, onJoin() {}, onLeave() {}, on() {}, send() {}, onLive() {},
+    onDisconnect() {}, onReconnect() {}, leave: async () => {},
+  };
+}
+
+async function connect() {
+  if (ATTRACT || typeof MP === "undefined") return localRoom();
+  try {
+    const join = MP.join({ ...MP_CONNECT });
+    const mp = await Promise.race([join, new Promise((_, no) => setTimeout(() => no(new Error("timed out")), 10000))]);
+    window.mp = mp; // the builder calls window.mp.leave() when the page closes
+    return mp;
+  } catch (e) {
+    console.warn("Playing offline:", e && e.message);
+    return localRoom();
+  }
+}
+
+const parse = (v, fallback) => { if (typeof v !== "string") return fallback; try { return JSON.parse(v); } catch { return fallback; } };
+const memo = new Map();
+/** A shared JSON field, parsed once per change (read-only: never mutate what this returns). */
+function shared(key, fallback) {
+  const raw = S.shared[key], m = memo.get(key);
+  if (m && m.raw === raw) return m.v;
+  const v = parse(raw, fallback); memo.set(key, { raw, v }); return v;
+}
+let net = null;      // the room client (real or local)
+let player = null;   // MP.auth client: leaderboard and world-memory saves (null offline)
+let S = { entities: { players: {} }, shared: {} }; // latest state
+const seenHb = new Map(); // sessionId -> { hb, at } on OUR clock
+
+/** Players whose heartbeat moved in the last 3s (plus us), sorted by sessionId. */
+function livePlayers() {
+  const now = performance.now(), out = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    const s = seenHb.get(id);
+    if (!s || s.hb !== p.hb) seenHb.set(id, { hb: p.hb, at: now });
+    if (id === net.sessionId || now - seenHb.get(id).at < 3000) out.push(id);
+  }
+  return out.sort();
+}
+const isHost = () => livePlayers()[0] === net.sessionId;
+
+// Live ops: the owner can change these from the dashboard, no new deploy.
+const liveConfig = () => (net && net.live && net.live.config) || {};
+function palette() { const p = liveConfig().palette; return Array.isArray(p) && p.length === 16 && p.every((c) => typeof c === "string") ? p : CONFIG.palette; }
+const cooldown = () => Math.max(250, Math.min(60000, Number(liveConfig().cooldownMs) || CONFIG.cooldownMs));
+function theme() {
+  const t = liveConfig().theme, event = net && net.live && (net.live.active || [])[0];
+  return typeof t === "string" && t ? t : event && event.title ? event.title : CONFIG.theme;
+}
+
+// ── WORLD MEMORY ────────────────────────────────────────────────────────────────────
+// A relay room forgets everything when its last player leaves, so the PLAYERS remember the world:
+//   1. Every CONFIG.saveEvery ms and when the page closes, each player saves a copy of the live
+//      world with its `rev` (how many changes PEOPLE made; bots don't count, so a fresh world
+//      full of bot builds never beats a saved one) to its player save (player.data, namespace
+//      CONFIG.saveNs) and to this browser (localStorage). A copy with a higher rev than the live
+//      world is never overwritten: it is kept and offered.
+//   2. The first player into an empty room becomes host and loads its copy into shared.
+//   3. A player who joins holding a copy with a HIGHER rev than the live world offers it: it
+//      writes the copy into its own entity (`wmh` header, `wm0`, `wm1`… chunks under 2048
+//      characters) and the host adopts it. The copy with more building in it wins; changes
+//      made only in the other copy are lost.
+// The game supplies worldSnapshot(), liveRev() (-1 = no world yet) and loadWorld(world, rev).
+const memory = { saved: null, ready: false, cloud: null, lastJson: "", lastSave: 0, offerRev: 0, offerN: 0 };
+const memoryKey = () => "mpa-world:" + MP_CONNECT.room + (net.offline ? ":offline" : "");
+
+/** Read my copy: this browser's and my cloud save, whichever has the higher rev. */
+async function loadMemory() {
+  let best = null;
+  try { best = JSON.parse(localStorage.getItem(memoryKey()) || "null"); } catch {}
+  if (player) {
+    try {
+      const doc = (await player.data.get(CONFIG.saveNs)).data;
+      if (doc && doc.room === MP_CONNECT.room && doc.world && (!best || doc.rev > best.rev)) best = doc;
+      memory.cloud = true;
+    } catch (e) { memory.cloud = false; console.warn("World memory: no cloud save, this browser only:", e && e.message); }
+  }
+  memory.saved = best && best.room === MP_CONNECT.room && best.world && typeof best.rev === "number" ? best : null;
+  memory.lastJson = memory.saved ? JSON.stringify(memory.saved.world) : "";
+  memory.ready = true;
+}
+
+/** Save my copy of the live world, unless it is unchanged or older than the copy I hold. */
+function rememberWorld() {
+  if (ATTRACT || !memory.ready) return;
+  const rev = liveRev();
+  if (rev < 0 || (memory.saved && rev < memory.saved.rev)) return; // mine is newer: keep it, keep offering it
+  const doc = { room: MP_CONNECT.room, rev, at: Date.now(), world: worldSnapshot() };
+  const json = JSON.stringify(doc.world);
+  if (json === memory.lastJson) return;
+  memory.lastJson = json; memory.saved = doc;
+  try { localStorage.setItem(memoryKey(), JSON.stringify(doc)); } catch {}
+  if (player && memory.cloud) {
+    player.data.set(doc, { namespace: CONFIG.saveNs })
+      .catch((e) => e && e.current ? player.data.set(doc, { namespace: CONFIG.saveNs, version: e.current.version }) : Promise.reject(e))
+      .catch((e) => { if (e && (e.status === 401 || e.status === 403)) memory.cloud = false; });
+  }
+  const tag = document.getElementById("saved");
+  if (tag) { tag.classList.add("on"); setTimeout(() => tag.classList.remove("on"), 1600); }
+}
+
+/** Once a second: offer my copy if it beats the live world (the host simply loads it). */
+function offerMemory() {
+  if (ATTRACT || !memory.ready) return;
+  const mine = memory.saved, live = liveRev(), better = mine && mine.rev > live;
+  if (isHost()) {
+    if (memory.offerRev) clearOffer();
+    if (better && live >= 0 && loadWorld(mine.world, mine.rev)) memoryAdopted("");
+    return;
+  }
+  if (better && memory.offerRev !== mine.rev) {
+    const json = JSON.stringify(mine.world), fields = {}, n = Math.ceil(json.length / 1900);
+    if (n > 40) return; // too big for my entity: keep it for when I am host
+    for (let i = 0; i < n; i++) fields["wm" + i] = "~" + json.slice(i * 1900, (i + 1) * 1900); // "~" keeps it a string
+    net.me.set(fields);
+    net.me.set("wmh", JSON.stringify({ room: MP_CONNECT.room, rev: mine.rev, n })); // header last: chunks land first
+    memory.offerRev = mine.rev; memory.offerN = n;
+  } else if (!better && memory.offerRev) clearOffer();
+}
+function clearOffer() {
+  const fields = { wmh: "" };
+  for (let i = 0; i < memory.offerN; i++) fields["wm" + i] = "";
+  net.me.set(fields); memory.offerRev = 0; memory.offerN = 0;
+}
+
+/** Host, once a second: adopt the best complete offer that beats the live world. */
+function adoptOffers() {
+  let best = null;
+  for (const id of livePlayers()) {
+    const p = S.entities.players[id], h = id !== net.sessionId && parse(p && p.wmh, null);
+    if (!h || h.room !== MP_CONNECT.room || !(h.n <= 40) || !(h.rev > liveRev()) || (best && h.rev <= best.rev)) continue;
+    let json = "";
+    for (let i = 0; i < h.n && json !== null; i++) { const c = p["wm" + i]; json = typeof c === "string" && c[0] === "~" ? json + c.slice(1) : null; }
+    const world = parse(json, null);
+    if (world) best = { rev: h.rev, world, name: p.n || "A player" };
+  }
+  if (best && loadWorld(best.world, best.rev)) memoryAdopted(best.name);
+}
+function memoryAdopted(name) {
+  const text = name ? `${name} brought back the world they saved` : "Welcome back: your saved world is loaded";
+  toast(text); net.send("memory", { text: name ? text : "The host brought back the world they saved" });
+}
+function memoryTick() {
+  offerMemory();
+  if (isHost() && !ATTRACT) adoptOffers();
+  if (performance.now() - memory.lastSave > CONFIG.saveEvery) { memory.lastSave = performance.now(); rememberWorld(); }
+}
+addEventListener("pagehide", () => rememberWorld());
+document.addEventListener("visibilitychange", () => { if (document.hidden) rememberWorld(); });
+
+// ── WALL ────────────────────────────────────────────────────────────────────────────
+// Row y lives in shared field "row<y>": `size` letters, one per pixel.
+const N = CONFIG.size, BLANK = LETTERS[0].repeat(N);
+const cleanRow = (raw) => typeof raw === "string" && raw.length === N && /^[a-p]+$/.test(raw) ? raw : BLANK;
+const view = { rows: [], palette: null, dirty: true, pops: [] }; // what everyone draws
+const pending = new Map(); // y*N+x -> { c, until }: my pixel, shown until the host's row comes back
+const me = { color: 5, readyAt: 0, placed: 0, unsent: 0, hover: null, cur: "", lastCur: 0 };
+const img = document.createElement("canvas"); img.width = img.height = N;
+const imgCtx = img.getContext("2d"), pixels = imgCtx.createImageData(N, N);
+
+function syncView(now) {
+  for (let y = 0; y < N; y++) {
+    const raw = cleanRow(S.shared["row" + y]), old = view.rows[y];
+    if (raw === old) continue;
+    if (old) for (let x = 0; x < N; x++) if (raw[x] !== old[x] && !pending.has(y * N + x) && view.pops.length < 80) view.pops.push({ x, y, c: LETTERS.indexOf(raw[x]), t0: now });
+    view.rows[y] = raw; view.dirty = true;
+  }
+  for (const [k, p] of pending) {
+    const got = view.rows[Math.floor(k / N)][k % N] === LETTERS[p.c];
+    if (got) { me.placed++; me.unsent++; } // the host took my pixel
+    if (got || now > p.until) { pending.delete(k); view.dirty = true; }
+  }
+  if (view.palette !== palette()) { view.palette = palette(); view.dirty = true; buildPalette(); }
+  if (view.dirty) { view.dirty = false; paintImage(); }
+}
+/** The 64×64 picture of the wall (rows from state + my pending pixels), drawn scaled up. */
+function paintImage() {
+  const rgb = palette().map((h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const p = pending.get(y * N + x), c = p ? p.c : Math.max(0, LETTERS.indexOf((view.rows[y] || BLANK)[x])), i = (y * N + x) * 4;
+    pixels.data[i] = rgb[c][0]; pixels.data[i + 1] = rgb[c][1]; pixels.data[i + 2] = rgb[c][2]; pixels.data[i + 3] = 255;
+  }
+  imgCtx.putImageData(pixels, 0, 0);
+}
+
+/** Paint the pixel under the cursor (if the wait is over). */
+function paintAt(x, y) {
+  if (ATTRACT || x < 0 || y < 0 || x >= N || y >= N) return;
+  const now = performance.now();
+  if (now < me.readyAt) { toast("Wait for the bar to fill"); return; }
+  const k = y * N + x;
+  if ((pending.has(k) ? pending.get(k).c : LETTERS.indexOf(view.rows[y][x])) === me.color) return;
+  me.readyAt = now + cooldown();
+  pending.set(k, { c: me.color, until: now + 2500 }); view.dirty = true;
+  view.pops.push({ x, y, c: me.color, t0: now, mine: true }); sfx(660 + me.color * 30);
+  const msg = { x, y, c: me.color };
+  if (isHost()) applyPaint(net.sessionId, msg, true); else net.send("paint", msg);
+  if (me.hint) { me.hint = false; $("hint").style.opacity = 0; }
+}
+
+// ── WALL (HOST) ─────────────────────────────────────────────────────────────────────
+const wall = { rows: [], rev: 0, adopted: false, dirty: new Set(), revDirty: false, last: new Map(), bots: new Map(), lastFlush: 0, lastBots: 0, botsJson: "" };
+const rnd = (a, b) => a + Math.random() * (b - a);
+let startedAt = 0;
+
+/** Become host: take the wall exactly as state has it. */
+function adoptWall() {
+  wall.rows = Array.from({ length: N }, (_, y) => cleanRow(S.shared["row" + y]).split(""));
+  wall.rev = Number(S.shared.rev) || 0; wall.dirty.clear(); wall.adopted = true; wall.bots.clear();
+  for (const b of shared("bots", [])) wall.bots.set(b.i, { id: b.i, name: b.n, c: b.c, x: b.x, y: b.y, job: b.j && MOTIFS[b.j[0]] ? makeJob(...b.j) : null, nextAt: 0, readyAt: 0 });
+}
+/** World memory: install a saved wall (every row checked). */
+function loadWorld(snap, rev) {
+  if (!snap || !Array.isArray(snap.rows) || snap.rows.length !== N || typeof rev !== "number") return false;
+  wall.rows = snap.rows.map((r) => cleanRow(r).split(""));
+  wall.rev = rev; wall.adopted = true; wall.revDirty = true; markChangedRows();
+  for (const b of wall.bots.values()) b.job = null;
+  return true;
+}
+function worldSnapshot() { return { rows: Array.from({ length: N }, (_, y) => isHost() && wall.adopted ? wall.rows[y].join("") : cleanRow(S.shared["row" + y])) }; }
+function liveRev() { return isHost() && wall.adopted ? wall.rev : typeof S.shared.rev === "number" ? S.shared.rev : -1; }
+
+/** A fresh wall: a few pictures, the same in every new room. */
+function defaultWall() {
+  wall.rows = Array.from({ length: N }, () => BLANK.split(""));
+  wall.rev = 0; wall.adopted = true; wall.revDirty = true;
+  const spots = [["heart", 6, 6], ["tree", 50, 46], ["smiley", 44, 8], ["mushroom", 8, 48], ["invader", 26, 28]];
+  if (ATTRACT) spots.push(["sun", 18, 12], ["ghost", 34, 12], ["flower", 56, 28], ["star", 12, 30], ["heart", 38, 46], ["tree", 22, 50], ["invader", 44, 26], ["mushroom", 54, 10]);
+  for (const [name, ox, oy] of spots) for (const [x, y, c] of motifPixels(name, ox, oy)) wall.rows[y][x] = LETTERS[c];
+  markChangedRows();
+}
+/** Queue every row that differs from what state already has (a blank row needs no write). */
+function markChangedRows() { for (let y = 0; y < N; y++) if (wall.rows[y].join("") !== cleanRow(S.shared["row" + y])) wall.dirty.add(y); }
+function motifPixels(name, ox, oy) {
+  const out = [];
+  MOTIFS[name].forEach((row, dy) => [...row].forEach((ch, dx) => { if (ch !== "." && ox + dx < N && oy + dy < N) out.push([ox + dx, oy + dy, LETTERS.indexOf(ch)]); }));
+  return out;
+}
+
+/** A "paint" intent (or a bot's pixel): checks the wait between pixels, then sets it. */
+function applyPaint(from, m, human) {
+  const { x, y, c } = m || {};
+  if (![x, y, c].every(Number.isInteger) || x < 0 || y < 0 || x >= N || y >= N || c < 0 || c > 15) return false;
+  const now = performance.now();
+  if (human && now - (wall.last.get(from) || -1e9) < cooldown() - 300) return false; // too soon: refused
+  if (human) wall.last.set(from, now);
+  if (wall.rows[y][x] === LETTERS[c]) return false;
+  wall.rows[y][x] = LETTERS[c]; wall.dirty.add(y);
+  if (human) { wall.rev++; wall.revDirty = true; }
+  return true;
+}
+
+function flush(now) {
+  if (now - wall.lastFlush < 200) return;
+  wall.lastFlush = now;
+  let n = 0;
+  for (const y of wall.dirty) { if (n++ >= CONFIG.rowsPerFlush) break; net.setShared("row" + y, wall.rows[y].join("")); wall.dirty.delete(y); }
+  if (wall.revDirty && !wall.dirty.size) { net.setShared("rev", wall.rev); wall.revDirty = false; }
+}
+
+function hostTick(dt, now) {
+  if (!wall.adopted) {
+    if (S.shared.rev !== undefined) adoptWall();
+    else if (memory.ready || now - startedAt > 3000) { if (!(memory.saved && loadWorld(memory.saved.world, memory.saved.rev))) defaultWall(); else memoryAdopted(""); }
+    else return; // first one here: wait a moment for my saved wall
+  }
+  const humans = livePlayers().length - (ATTRACT ? 1 : 0), want = Math.max(0, CONFIG.seats - humans);
+  if (wall.bots.size < want) spawnBot();
+  if (wall.bots.size > want) { const idle = [...wall.bots.values()].find((b) => !b.job); if (idle) wall.bots.delete(idle.id); } // a bot leaves once its picture is done
+  for (const b of wall.bots.values()) botStep(b, dt, now);
+  flush(now);
+  if (now - wall.lastBots > 150) {
+    wall.lastBots = now;
+    const json = JSON.stringify([...wall.bots.values()].map((b) => ({ i: b.id, n: b.name, c: b.c, x: +b.x.toFixed(1), y: +b.y.toFixed(1), j: b.job ? [b.job.name, b.job.ox, b.job.oy, b.job.i] : 0 })));
+    if (json !== wall.botsJson) { wall.botsJson = json; net.setShared("bots", json); }
+  }
+}
+
+// Bots: pick a blank patch, glide the cursor there and paint a picture pixel by pixel.
+function spawnBot() {
+  const used = new Set([...wall.bots.values()].map((b) => b.name)), name = BOT_NAMES.find((n) => !used.has(n)) || "Bot";
+  const id = "b" + Math.random().toString(36).slice(2, 6);
+  wall.bots.set(id, { id, name, c: 5, x: rnd(0, N), y: rnd(0, N), job: null, nextAt: 0, readyAt: 0 });
+}
+function pickJob() {
+  const painted = wall.rows.reduce((n, r) => n + r.filter((ch) => ch !== LETTERS[0]).length, 0);
+  if (painted > N * N * CONFIG.botFill) return null;
+  const names = Object.keys(MOTIFS);
+  for (let tries = 0; tries < 30; tries++) {
+    const name = names[Math.floor(Math.random() * names.length)], w = MOTIFS[name][0].length, h = MOTIFS[name].length;
+    const ox = Math.floor(rnd(1, N - w - 1)), oy = Math.floor(rnd(1, N - h - 1));
+    let blank = ![...wall.bots.values()].some((o) => o.job && ox < o.job.ox + MOTIFS[o.job.name][0].length + 2 && o.job.ox < ox + w + 2 && oy < o.job.oy + MOTIFS[o.job.name].length + 2 && o.job.oy < oy + h + 2); // not where another bot paints
+    for (let y = oy - 1; blank && y <= oy + h; y++) for (let x = ox - 1; x <= ox + w; x++) if (wall.rows[y][x] !== LETTERS[0]) { blank = false; break; }
+    if (blank) return makeJob(name, ox, oy, 0);
+  }
+  return null;
+}
+function makeJob(name, ox, oy, i) { const pixels = motifPixels(name, ox | 0, oy | 0); return pixels.length ? { name, ox: ox | 0, oy: oy | 0, i: Math.min(i | 0, pixels.length - 1), pixels } : null; }
+function botStep(b, dt, now) {
+  if (!b.job) {
+    if (now < b.nextAt) return;
+    b.job = pickJob();
+    if (!b.job) { b.nextAt = now + 4000; return; }
+    b.c = b.job.pixels[0][2];
+  }
+  const [tx, ty, c] = b.job.pixels[b.job.i], dx = tx - b.x, dy = ty - b.y, d = Math.hypot(dx, dy);
+  const step = Math.min(d, Math.max(4, d * 4) * dt); // glide: fast far away, gentle up close
+  if (d > 0.01) { b.x += (dx / d) * step; b.y += (dy / d) * step; }
+  if (d < 0.3 && now >= b.readyAt) {
+    applyPaint("bot", { x: tx, y: ty, c }, false);
+    b.c = c; b.readyAt = now + CONFIG.botCooldownMs * rnd(0.7, 1.3);
+    if (++b.job.i >= b.job.pixels.length) { b.job = null; b.nextAt = now + rnd(800, 2500); }
+  }
+}
+
+// ── DRAW ────────────────────────────────────────────────────────────────────────────
+const cv = document.getElementById("game"), ctx = cv.getContext("2d");
+let W = 0, H = 0, DPR = 1;
+const cam = { x: N / 2, y: N / 2, z: 8 };
+const fitZoom = () => Math.max(2, Math.min(W / (N + 6), (H - 150) / (N + 6)));
+function fit() { DPR = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight; cv.width = W * DPR; cv.height = H * DPR; cam.z = Math.max(cam.z, fitZoom()); }
+addEventListener("resize", fit); addEventListener("orientationchange", fit);
+const midY = () => H / 2 - (ATTRACT ? 0 : 36); // the wall sits a little above the palette
+const toScreen = (x, y) => [(x - cam.x) * cam.z + W / 2, (y - cam.y) * cam.z + midY()];
+const toWall = (sx, sy) => [(sx - W / 2) / cam.z + cam.x, (sy - midY()) / cam.z + cam.y];
+function zoomAt(f, sx, sy) {
+  const [wx, wy] = toWall(sx, sy);
+  cam.z = Math.max(fitZoom() * 0.8, Math.min(60, cam.z * f));
+  cam.x = wx - (sx - W / 2) / cam.z; cam.y = wy - (sy - midY()) / cam.z; clampCam();
+}
+function clampCam() { cam.x = Math.max(0, Math.min(N, cam.x)); cam.y = Math.max(0, Math.min(N, cam.y)); }
+
+function draw(now) {
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.fillStyle = "#141a2e"; ctx.fillRect(0, 0, W, H);
+  const [x0, y0] = toScreen(0, 0), size = N * cam.z;
+  ctx.fillStyle = "#0008"; ctx.fillRect(x0 + 6, y0 + 8, size, size); // shadow
+  ctx.imageSmoothingEnabled = false; ctx.drawImage(img, x0, y0, size, size);
+  if (cam.z >= 10) { // grid lines when zoomed in
+    ctx.strokeStyle = "#0000001a"; ctx.lineWidth = 1; ctx.beginPath();
+    for (let i = 0; i <= N; i++) { ctx.moveTo(x0 + i * cam.z, y0); ctx.lineTo(x0 + i * cam.z, y0 + size); ctx.moveTo(x0, y0 + i * cam.z); ctx.lineTo(x0 + size, y0 + i * cam.z); }
+    ctx.stroke();
+  }
+  // pops: new pixels land with a bounce and a ring
+  const pal = palette();
+  view.pops = view.pops.filter((p) => now - p.t0 < 450);
+  for (const p of view.pops) {
+    const t = (now - p.t0) / 450, s = cam.z * (1 + 0.6 * Math.sin(t * Math.PI) * (1 - t)), [sx, sy] = toScreen(p.x + 0.5, p.y + 0.5);
+    ctx.fillStyle = pal[p.c]; ctx.fillRect(sx - s / 2, sy - s / 2, s, s);
+    ctx.strokeStyle = `rgba(255,255,255,${1 - t})`; ctx.lineWidth = 2; const r = cam.z * (0.6 + t * 1.6); ctx.strokeRect(sx - r, sy - r, r * 2, r * 2);
+  }
+  // my hover square (mouse) in the chosen color
+  if (me.hover && !ATTRACT) {
+    const [sx, sy] = toScreen(me.hover[0], me.hover[1]), ready = performance.now() >= me.readyAt;
+    ctx.globalAlpha = ready ? 0.7 : 0.25; ctx.fillStyle = pal[me.color]; ctx.fillRect(sx, sy, cam.z, cam.z); ctx.globalAlpha = 1;
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.strokeRect(sx - 1, sy - 1, cam.z + 2, cam.z + 2);
+  }
+  drawCursors(now);
+}
+// Everyone else's cursors (players and bots), eased toward where they last were.
+const cursors = new Map(); // id -> { x, y, seen }
+function drawCursors(now) {
+  const list = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) { if (id === net.sessionId) continue; const c = parse(p.cur, null); if (c) list.push({ id, x: c.x, y: c.y, name: p.n || "Player", color: p.h || "#fff" }); }
+  const bots = isHost() ? [...wall.bots.values()].map((b) => ({ i: b.id, n: b.name, c: b.c, x: b.x, y: b.y })) : shared("bots", []);
+  for (const b of bots) list.push({ id: b.i, x: b.x, y: b.y, name: b.n, color: palette()[b.c] || "#fff", bot: true });
+  for (const c of list) {
+    let v = cursors.get(c.id);
+    if (!v) { v = { x: c.x, y: c.y }; cursors.set(c.id, v); }
+    v.x += (c.x - v.x) * 0.25; v.y += (c.y - v.y) * 0.25; v.seen = now;
+    const [sx, sy] = toScreen(v.x + 0.5, v.y + 0.5);
+    ctx.save(); ctx.translate(sx, sy);
+    ctx.fillStyle = c.color; ctx.strokeStyle = "#000c"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, 17); ctx.lineTo(4.5, 13); ctx.lineTo(8, 20); ctx.lineTo(10.5, 19); ctx.lineTo(7, 12); ctx.lineTo(12.5, 12); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.font = "700 12px system-ui, sans-serif"; const w = ctx.measureText(c.name).width + 10;
+    ctx.fillStyle = "#000a"; ctx.fillRect(12, 18, w, 18); ctx.fillStyle = "#fff"; ctx.fillText(c.name, 17, 31);
+    ctx.restore();
+  }
+  for (const [id, v] of cursors) if (v.seen !== now) cursors.delete(id);
+}
+
+// ── HUD & BOARD ─────────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+let board = null;
+function buildPalette() {
+  $("pal").innerHTML = "";
+  palette().forEach((hex, c) => {
+    const b = document.createElement("button"); b.style.background = hex; b.dataset.c = c; b.title = hex;
+    b.addEventListener("pointerdown", (e) => { e.preventDefault(); pickColor(c); });
+    $("pal").append(b);
+  });
+  pickColor(me.color);
+}
+function pickColor(c) { me.color = c; for (const b of $("pal").children) b.classList.toggle("on", +b.dataset.c === c); }
+function toast(text) { const t = $("toast"); t.textContent = text; t.classList.add("on"); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), 2500); }
+function hud() {
+  if (ATTRACT) return;
+  const n = livePlayers().length, left = me.readyAt - performance.now();
+  $("net").textContent = net.offline ? "Offline: playing with bots" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the wall" : ""}`;
+  $("theme").textContent = theme();
+  $("wait").querySelector("span").textContent = left > 0 ? `Next pixel in ${(left / 1000).toFixed(1)}s` : `Ready · ${me.placed} placed`;
+  $("wait").querySelector("i").style.width = left > 0 ? `${100 * (1 - left / cooldown())}%` : "100%";
+}
+function sendScore() { if (board && me.unsent > 0) { board.submit(me.unsent, "inc").catch(() => {}); me.unsent = 0; } }
+function showBoard() {
+  $("over").hidden = false;
+  $("mine").textContent = `You placed ${me.placed} pixel${me.placed === 1 ? "" : "s"} this visit.`;
+  const list = $("board");
+  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
+  list.innerHTML = "<li>Loading the leaderboard…</li>";
+  const sent = me.unsent > 0 ? board.submit(me.unsent, "inc").catch(() => null) : Promise.resolve();
+  me.unsent = 0;
+  sent.then(() => board.top(10)).then(({ entries }) => {
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li>No painters yet. Be the first.</li>";
+  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+}
+$("boardBtn").onclick = showBoard;
+$("back").onclick = () => { $("over").hidden = true; };
+let audio = null;
+function sfx(freq) {
+  try {
+    audio = audio || new AudioContext();
+    const o = audio.createOscillator(), g = audio.createGain(), t = audio.currentTime;
+    o.type = "triangle"; o.frequency.setValueAtTime(freq, t); o.frequency.exponentialRampToValueAtTime(freq * 1.5, t + 0.08);
+    g.gain.setValueAtTime(0.06, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+    o.connect(g).connect(audio.destination); o.start(t); o.stop(t + 0.13);
+  } catch {}
+}
+
+// ── INPUT ───────────────────────────────────────────────────────────────────────────
+const touchUI = matchMedia("(pointer: coarse)").matches;
+const pointers = new Map(); // pointerId -> { x, y, moved }
+let pinch = null;
+const cellAt = (sx, sy) => toWall(sx, sy).map(Math.floor);
+cv.addEventListener("pointerdown", (e) => {
+  e.preventDefault(); try { cv.setPointerCapture(e.pointerId); } catch {}
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, moved: e.button === 1 || e.button === 2 ? 99 : 0 });
+  if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), z: cam.z }; }
+});
+cv.addEventListener("pointermove", (e) => {
+  if (e.pointerType === "mouse") me.hover = cellAt(e.clientX, e.clientY);
+  const p = pointers.get(e.pointerId); if (!p) return;
+  const dx = e.clientX - p.x, dy = e.clientY - p.y;
+  p.x = e.clientX; p.y = e.clientY; p.moved += Math.abs(dx) + Math.abs(dy);
+  if (pointers.size === 2 && pinch) { // pinch: zoom around the middle, and pan with it
+    const [a, b] = [...pointers.values()], mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    zoomAt((pinch.z * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d) / cam.z, mx, my);
+    cam.x -= dx / 2 / cam.z; cam.y -= dy / 2 / cam.z; clampCam();
+  } else if (p.moved > 8) { cam.x -= dx / cam.z; cam.y -= dy / cam.z; clampCam(); }
+});
+function release(e, tap) {
+  const p = pointers.get(e.pointerId); if (!p) return;
+  pointers.delete(e.pointerId);
+  if (tap && !pinch && p.moved <= 8) { const [x, y] = cellAt(e.clientX, e.clientY); if (e.pointerType !== "mouse") me.hover = [x, y]; paintAt(x, y); }
+  if (pointers.size === 0) pinch = null;
+}
+cv.addEventListener("pointerup", (e) => release(e, true));
+cv.addEventListener("pointercancel", (e) => release(e, false));
+cv.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse") me.hover = null; });
+cv.addEventListener("contextmenu", (e) => e.preventDefault());
+cv.addEventListener("wheel", (e) => { e.preventDefault(); zoomAt(Math.pow(1.0015, -e.deltaY), e.clientX, e.clientY); }, { passive: false });
+$("zin").onclick = () => zoomAt(1.4, W / 2, H / 2);
+$("zout").onclick = () => zoomAt(1 / 1.4, W / 2, H / 2);
+addEventListener("keydown", (e) => {
+  if (e.key === "+" || e.key === "=") zoomAt(1.25, W / 2, H / 2);
+  if (e.key === "-") zoomAt(0.8, W / 2, H / 2);
+  if (e.key === "q" || e.key === "e") pickColor((me.color + (e.key === "e" ? 1 : 15)) % 16);
+  const pan = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+  if (pan) { e.preventDefault(); cam.x += pan[0] * 60 / cam.z; cam.y += pan[1] * 60 / cam.z; clampCam(); }
+});
+document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+
+// ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
+let last = performance.now(), lastHb = 0, lastHud = 0, lastScore = 0;
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); }
+  if (isHost()) hostTick(dt, now); else wall.adopted = false;
+  syncView(now);
+  if (me.hover && now - me.lastCur > 100) { // my cursor, ~10 times a second when it moves
+    const cur = JSON.stringify({ x: me.hover[0], y: me.hover[1] });
+    if (cur !== me.cur) { me.cur = cur; me.lastCur = now; net.me.set("cur", cur); }
+  }
+  if (ATTRACT) { // the preview: the wall fills the frame and drifts slowly while bots paint
+    const t = now / 1000; cam.z = Math.max(W, H) / N * 1.15;
+    cam.x = N / 2 + Math.sin(t * 0.3) * Math.max(0, N / 2 - W / 2 / cam.z); cam.y = N / 2 + Math.sin(t * 0.45 + 1) * Math.max(0, N / 2 - H / 2 / cam.z);
+  }
+  draw(now);
+  if (now - lastHud > 100) { lastHud = now; hud(); }
+  if (now - lastScore > 15000) { lastScore = now; sendScore(); }
+  requestAnimationFrame(frame);
+}
+
+(async function start() {
+  document.body.classList.toggle("attract", ATTRACT);
+  if (ATTRACT) $("net").textContent = "";
+  fit(); cam.z = fitZoom();
+  net = await connect();
+  net.onState((st) => { S = st; });
+  net.on("paint", (msg, from) => { if (isHost()) applyPaint(from, msg, true); });
+  net.on("memory", (m) => { if (m && typeof m.text === "string") toast(m.text.slice(0, 80)); });
+  net.onDisconnect(() => { $("net").textContent = "Reconnecting…"; });
+  if (!net.offline && typeof MP !== "undefined") { player = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl }); board = player.leaderboard(CONFIG.board); }
+  const myName = (() => { try { return localStorage.getItem("mpa-name") || ""; } catch { return ""; } })() ||
+    ["Tiny", "Bold", "Happy", "Neon", "Quiet", "Swift"][Math.floor(Math.random() * 6)] + " " + ["Painter", "Pixel", "Brush", "Doodler", "Artist"][Math.floor(Math.random() * 5)];
+  const taken = new Set(Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.h));
+  const myColor = CURSOR_COLORS.find((c) => !taken.has(c)) || CURSOR_COLORS[Math.floor(Math.random() * CURSOR_COLORS.length)];
+  net.me.set({ n: myName, h: myColor, hb: Date.now() });
+  addEventListener("pagehide", sendScore);
+  startedAt = performance.now();
+  if (ATTRACT) { memory.ready = true; CONFIG.seats = 7; CONFIG.botCooldownMs = 110; CONFIG.botFill = 0.8; }
+  else {
+    loadMemory();
+    me.hint = true;
+    $("hint").textContent = touchUI ? "Tap a square to paint · drag to move · pinch to zoom" : "Click a square to paint · drag to move · scroll to zoom";
+    setTimeout(() => { $("hint").style.opacity = 0; }, 8000);
+  }
+  setInterval(memoryTick, 1000);
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

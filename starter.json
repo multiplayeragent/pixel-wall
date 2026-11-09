@@ -1,0 +1,22 @@
+{
+  "name": "Pixel Wall",
+  "genre": "sandbox",
+  "dim": "2D",
+  "mode": "Drop-in",
+  "players": "2–30",
+  "hook": "One shared canvas, one pixel at a time.",
+  "how": "Place one pixel every couple of seconds. Work with others to draw something, or paint over them. Bots paint little pictures while you wait for company.",
+  "controls": "Click or tap a square to paint, drag to move, scroll or pinch to zoom",
+  "uses": [
+    ["World memory", "The wall is remembered by the players who painted it: whoever comes back first brings it back for everyone."],
+    ["Live ops", "Change the wait between pixels, the palette or the theme banner with no new deploy."],
+    ["Leaderboard", "The players who have placed the most pixels."],
+    ["Host-run rules", "The host's browser checks every pixel and the wait between them; if it leaves, the next player takes over."],
+    ["Bots", "Bots paint hearts, trees and space invaders until enough people join."]
+  ],
+  "ideas": [
+    "Make the canvas bigger, with zoom",
+    "Add a timelapse replay",
+    "Clear the wall every Sunday"
+  ]
+}
