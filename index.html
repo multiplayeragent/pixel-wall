@@ -30,7 +30,7 @@
   #toast.on { opacity: 1; }
   #over { position: fixed; inset: 0; display: grid; place-items: center; background: #0b1020b0; }
   #over[hidden] { display: none; }
-  .card { width: min(340px, 88vw); padding: 22px; border-radius: 16px; background: #1b2440; border: 1px solid #ffffff22; text-align: center; }
+  .card { box-sizing: border-box; width: min(386px, calc(100vw - 32px)); padding: 22px; border-radius: 16px; background: #1b2440; border: 1px solid #ffffff22; text-align: center; }
   .card h2 { margin: 0 0 4px; font-size: 24px; }
   .card ol { text-align: left; margin: 14px 0; padding-left: 26px; font-size: 14px; min-height: 40px; }
   .card li span { float: right; font-variant-numeric: tabular-nums; }
@@ -502,7 +502,10 @@ function draw(now) {
 const cursors = new Map(); // id -> { x, y, seen }
 function drawCursors(now) {
   const list = [];
-  for (const [id, p] of Object.entries(S.entities.players || {})) { if (id === net.sessionId) continue; const c = parse(p.cur, null); if (c) list.push({ id, x: c.x, y: c.y, name: p.n || "Player", color: p.h || "#fff" }); }
+  for (const id of livePlayers()) { // live players only: a closed tab's entity lingers ~30s
+    const p = S.entities.players[id], c = id !== net.sessionId && p ? parse(p.cur, null) : null;
+    if (c) list.push({ id, x: c.x, y: c.y, name: p.n || "Player", color: p.h || "#fff" });
+  }
   const bots = isHost() ? [...wall.bots.values()].map((b) => ({ i: b.id, n: b.name, c: b.c, x: b.x, y: b.y })) : shared("bots", []);
   for (const b of bots) list.push({ id: b.i, x: b.x, y: b.y, name: b.n, color: palette()[b.c] || "#fff", bot: true });
   for (const c of list) {
@@ -535,10 +538,11 @@ function buildPalette() {
 }
 function pickColor(c) { me.color = c; for (const b of $("pal").children) b.classList.toggle("on", +b.dataset.c === c); }
 function toast(text) { const t = $("toast"); t.textContent = text; t.classList.add("on"); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), 2500); }
+let dropped = false; // true while the connection is down: the HUD keeps showing "Reconnecting…"
 function hud() {
   if (ATTRACT) return;
   const n = livePlayers().length, left = me.readyAt - performance.now();
-  $("net").textContent = net.offline ? "Offline: playing with bots" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the wall" : ""}`;
+  $("net").textContent = net.offline ? "Offline: playing with bots" : dropped ? "Reconnecting…" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the wall" : ""}`;
   $("theme").textContent = theme();
   $("wait").querySelector("span").textContent = left > 0 ? `Next pixel in ${(left / 1000).toFixed(1)}s` : `Ready · ${me.placed} placed`;
   $("wait").querySelector("i").style.width = left > 0 ? `${100 * (1 - left / cooldown())}%` : "100%";
@@ -612,11 +616,20 @@ addEventListener("keydown", (e) => {
 });
 document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
 
+let myColor = CURSOR_COLORS[0]; // my cursor color, picked on join: the first one nobody in the room has
+/** Two people joined at once with one cursor color: the one with the higher sessionId picks a free one. (Bot cursors wear the paint color they hold, never one of these.) */
+function fixColor() {
+  const others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId);
+  if (!others.some(([id, p]) => p.h === myColor && id < net.sessionId)) return;
+  const taken = new Set(others.map(([, p]) => p.h));
+  myColor = CURSOR_COLORS.find((c) => !taken.has(c)) || myColor; net.me.set("h", myColor);
+}
+
 // ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
 let last = performance.now(), lastHb = 0, lastHud = 0, lastScore = 0;
 function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000); last = now;
-  if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); }
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now; // never negative: the first frame can be stamped before `last`
+  if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
   if (isHost()) hostTick(dt, now); else wall.adopted = false;
   syncView(now);
   if (me.hover && now - me.lastCur > 100) { // my cursor, ~10 times a second when it moves
@@ -641,12 +654,13 @@ function frame(now) {
   net.onState((st) => { S = st; });
   net.on("paint", (msg, from) => { if (isHost()) applyPaint(from, msg, true); });
   net.on("memory", (m) => { if (m && typeof m.text === "string") toast(m.text.slice(0, 80)); });
-  net.onDisconnect(() => { $("net").textContent = "Reconnecting…"; });
+  net.onDisconnect(() => { dropped = true; $("net").textContent = "Reconnecting…"; });
+  net.onReconnect(() => { dropped = false; });
   if (!net.offline && typeof MP !== "undefined") { player = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl }); board = player.leaderboard(CONFIG.board); }
   const myName = (() => { try { return localStorage.getItem("mpa-name") || ""; } catch { return ""; } })() ||
     ["Tiny", "Bold", "Happy", "Neon", "Quiet", "Swift"][Math.floor(Math.random() * 6)] + " " + ["Painter", "Pixel", "Brush", "Doodler", "Artist"][Math.floor(Math.random() * 5)];
   const taken = new Set(Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.h));
-  const myColor = CURSOR_COLORS.find((c) => !taken.has(c)) || CURSOR_COLORS[Math.floor(Math.random() * CURSOR_COLORS.length)];
+  myColor = CURSOR_COLORS.find((c) => !taken.has(c)) || CURSOR_COLORS[Math.floor(Math.random() * CURSOR_COLORS.length)];
   net.me.set({ n: myName, h: myColor, hb: Date.now() });
   addEventListener("pagehide", sendScore);
   startedAt = performance.now();
