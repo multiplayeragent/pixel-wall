@@ -12,7 +12,7 @@
     ["Live ops", "Change the wait between pixels, the palette or the theme banner with no new deploy."],
     ["Leaderboard", "The players who have placed the most pixels."],
     ["Host-run rules", "The host's browser checks every pixel and the wait between them; if it leaves, the next player takes over."],
-    ["Bots", "Bots paint hearts, trees and space invaders until enough people join."]
+    ["Bots", "Bots paint hearts, trees and space invaders (and wipe and redo their old ones once the wall is full) until enough people join."]
   ],
   "ideas": [
     "Make the canvas bigger, with zoom",

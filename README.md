@@ -33,7 +33,7 @@ Without a key it still runs, offline with bots, and remembers your wall in this 
 - **Live ops:** Change the wait between pixels (`cooldownMs`), the 16-color `palette` or the `theme` banner from the live config, with no new deploy. A running live event's title shows in the banner.
 - **Leaderboard:** The players who have placed the most pixels, under the trophy button.
 - **Host-run rules:** The host's browser checks every pixel and the wait between them. If it leaves, the next player takes over.
-- **Bots:** Bots paint hearts, trees and space invaders until enough people join.
+- **Bots:** Bots paint hearts, trees and space invaders (and wipe and redo their old ones once the wall is full) until enough people join.
 - `?attract` runs it offline with bots only. The preview video is recorded from it.
 
 ## License

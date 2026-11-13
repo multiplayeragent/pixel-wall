@@ -25,7 +25,8 @@
   #pal button.on { border: 3px solid #fff; transform: translateY(-3px); box-shadow: 0 3px 8px #0008; }
   @media (max-width: 640px) { #pal { grid-template-columns: repeat(8, 44px); } #pal button { width: 44px; height: 44px; }
     #net, #saved { left: 50%; transform: translateX(-50%); white-space: nowrap; top: calc(max(10px, env(safe-area-inset-top)) + 42px); } #saved { top: calc(max(10px, env(safe-area-inset-top)) + 60px); } }
-  #hint { top: 22%; left: 16px; right: 16px; text-align: center; font-size: 17px; font-weight: 700; transition: opacity .8s; }
+  #hint { top: 22%; left: 50%; transform: translateX(-50%); width: max-content; max-width: calc(100vw - 32px); box-sizing: border-box; padding: 6px 12px; border-radius: 12px;
+          background: #1f2945dd; text-align: center; font-size: 17px; font-weight: 700; transition: opacity .8s; } /* a backing so it reads over the white wall */
   #toast { top: 30%; left: 16px; right: 16px; text-align: center; font-size: 18px; font-weight: 800; color: #ffd23f; opacity: 0; transition: opacity .4s; }
   #toast.on { opacity: 1; }
   #over { position: fixed; inset: 0; display: grid; place-items: center; background: #0b1020b0; }
@@ -34,6 +35,7 @@
   .card h2 { margin: 0 0 4px; font-size: 24px; }
   .card ol { text-align: left; margin: 14px 0; padding-left: 26px; font-size: 14px; min-height: 40px; }
   .card li span { float: right; font-variant-numeric: tabular-nums; }
+  .card li.msg { list-style: none; margin-left: -26px; text-align: center; opacity: .8; }
   button.go { width: 100%; min-height: 48px; border: 0; border-radius: 12px; background: #4cc38a; color: #08130d; font: 700 17px system-ui, sans-serif; cursor: pointer; }
   .attract .hud, .attract #side, .attract #dock { display: none !important; }
 </style>
@@ -52,7 +54,7 @@
   <div class="card">
     <h2>Top painters</h2>
     <div id="mine"></div>
-    <ol id="board"><li>Loading the leaderboard…</li></ol>
+    <ol id="board"><li class="msg">Loading the leaderboard…</li></ol>
     <button class="go" id="back">Back to the wall</button>
   </div>
 </div>
@@ -296,7 +298,7 @@ const N = CONFIG.size, BLANK = LETTERS[0].repeat(N);
 const cleanRow = (raw) => typeof raw === "string" && raw.length === N && /^[a-p]+$/.test(raw) ? raw : BLANK;
 const view = { rows: [], palette: null, dirty: true, pops: [] }; // what everyone draws
 const pending = new Map(); // y*N+x -> { c, until }: my pixel, shown until the host's row comes back
-const me = { color: 5, readyAt: 0, placed: 0, unsent: 0, hover: null, cur: "", lastCur: 0 };
+const me = { color: 5, readyAt: 0, placed: 0, unsent: 0, hover: null, mouse: null, cur: "", lastCur: 0 };
 const img = document.createElement("canvas"); img.width = img.height = N;
 const imgCtx = img.getContext("2d"), pixels = imgCtx.createImageData(N, N);
 
@@ -327,7 +329,7 @@ function paintImage() {
 
 /** Paint the pixel under the cursor (if the wait is over). */
 function paintAt(x, y) {
-  if (ATTRACT || x < 0 || y < 0 || x >= N || y >= N) return;
+  if (ATTRACT || !net || !view.rows.length || x < 0 || y < 0 || x >= N || y >= N) return; // nothing to paint on while still connecting
   const now = performance.now();
   if (now < me.readyAt) { toast("Wait for the bar to fill"); return; }
   const k = y * N + x;
@@ -413,7 +415,7 @@ function hostTick(dt, now) {
   flush(now);
   if (now - wall.lastBots > 150) {
     wall.lastBots = now;
-    const json = JSON.stringify([...wall.bots.values()].map((b) => ({ i: b.id, n: b.name, c: b.c, x: +b.x.toFixed(1), y: +b.y.toFixed(1), j: b.job ? [b.job.name, b.job.ox, b.job.oy, b.job.i] : 0 })));
+    const json = JSON.stringify([...wall.bots.values()].map((b) => ({ i: b.id, n: b.name, c: b.c, x: +b.x.toFixed(1), y: +b.y.toFixed(1), j: b.job ? [b.job.name, b.job.ox, b.job.oy, b.job.i, b.job.erase] : 0 })));
     if (json !== wall.botsJson) { wall.botsJson = json; net.setShared("bots", json); }
   }
 }
@@ -424,24 +426,37 @@ function spawnBot() {
   const id = "b" + Math.random().toString(36).slice(2, 6);
   wall.bots.set(id, { id, name, c: 5, x: rnd(0, N), y: rnd(0, N), job: null, nextAt: 0, readyAt: 0 });
 }
-function pickJob() {
+/** Another bot is painting near this w×h patch at (ox, oy). */
+const botNear = (ox, oy, w, h) => [...wall.bots.values()].some((o) => o.job && ox < o.job.ox + MOTIFS[o.job.name][0].length + 2 && o.job.ox < ox + w + 2 && oy < o.job.oy + MOTIFS[o.job.name].length + 2 && o.job.oy < oy + h + 2);
+/** A bot's next picture: a blank patch (first where it just wiped one, `prefer`), or, when the wall has
+ *  no room left, wiping one of the bots' old pictures so the wall keeps changing (bots used to stop for good). */
+function pickJob(prefer) {
   const painted = wall.rows.reduce((n, r) => n + r.filter((ch) => ch !== LETTERS[0]).length, 0);
-  if (painted > N * N * CONFIG.botFill) return null;
   const names = Object.keys(MOTIFS);
-  for (let tries = 0; tries < 30; tries++) {
+  for (let tries = 0; painted <= N * N * CONFIG.botFill && tries < 30; tries++) {
     const name = names[Math.floor(Math.random() * names.length)], w = MOTIFS[name][0].length, h = MOTIFS[name].length;
-    const ox = Math.floor(rnd(1, N - w - 1)), oy = Math.floor(rnd(1, N - h - 1));
-    let blank = ![...wall.bots.values()].some((o) => o.job && ox < o.job.ox + MOTIFS[o.job.name][0].length + 2 && o.job.ox < ox + w + 2 && oy < o.job.oy + MOTIFS[o.job.name].length + 2 && o.job.oy < oy + h + 2); // not where another bot paints
+    const ox = Math.min(N - w - 1, Math.max(1, prefer && tries < 12 ? prefer.ox : Math.floor(rnd(1, N - w - 1)))), oy = Math.min(N - h - 1, Math.max(1, prefer && tries < 12 ? prefer.oy : Math.floor(rnd(1, N - h - 1))));
+    let blank = !botNear(ox, oy, w, h); // not where another bot paints
     for (let y = oy - 1; blank && y <= oy + h; y++) for (let x = ox - 1; x <= ox + w; x++) if (wall.rows[y][x] !== LETTERS[0]) { blank = false; break; }
     if (blank) return makeJob(name, ox, oy, 0);
   }
-  return null;
+  const old = []; // pictures on the wall that are exactly one of the bots' motifs
+  for (const name of names) {
+    const px = motifPixels(name, 0, 0), w = MOTIFS[name][0].length, h = MOTIFS[name].length;
+    for (let oy = 0; oy + h <= N; oy++) for (let ox = 0; ox + w <= N; ox++) if (px.every(([x, y, c]) => wall.rows[oy + y][ox + x] === LETTERS[c]) && !botNear(ox, oy, w, h)) old.push([name, ox, oy]);
+  }
+  return old.length ? makeJob(...old[Math.floor(Math.random() * old.length)], 0, 1) : null;
 }
-function makeJob(name, ox, oy, i) { const pixels = motifPixels(name, ox | 0, oy | 0); return pixels.length ? { name, ox: ox | 0, oy: oy | 0, i: Math.min(i | 0, pixels.length - 1), pixels } : null; }
+/** The pixels of a job: motif `name` at (ox, oy), or (erase = 1) wiping that motif back to blank. */
+function makeJob(name, ox, oy, i, erase) {
+  let pixels = motifPixels(name, ox | 0, oy | 0);
+  if (erase) pixels = pixels.filter((p) => p[2] !== 0).map(([x, y]) => [x, y, 0]);
+  return pixels.length ? { name, ox: ox | 0, oy: oy | 0, i: Math.min(i | 0, pixels.length - 1), pixels, erase: erase ? 1 : 0 } : null;
+}
 function botStep(b, dt, now) {
   if (!b.job) {
     if (now < b.nextAt) return;
-    b.job = pickJob();
+    b.job = pickJob(b.prefer); b.prefer = null;
     if (!b.job) { b.nextAt = now + 4000; return; }
     b.c = b.job.pixels[0][2];
   }
@@ -451,7 +466,7 @@ function botStep(b, dt, now) {
   if (d < 0.3 && now >= b.readyAt) {
     applyPaint("bot", { x: tx, y: ty, c }, false);
     b.c = c; b.readyAt = now + CONFIG.botCooldownMs * rnd(0.7, 1.3);
-    if (++b.job.i >= b.job.pixels.length) { b.job = null; b.nextAt = now + rnd(800, 2500); }
+    if (++b.job.i >= b.job.pixels.length) { if (b.job.erase) b.prefer = { ox: b.job.ox, oy: b.job.oy }; b.job = null; b.nextAt = now + rnd(800, 2500); } // after a wipe, paint a new picture there
   }
 }
 
@@ -553,13 +568,14 @@ function showBoard() {
   $("over").hidden = false;
   $("mine").textContent = `You placed ${me.placed} pixel${me.placed === 1 ? "" : "s"} this visit.`;
   const list = $("board");
-  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
-  list.innerHTML = "<li>Loading the leaderboard…</li>";
+  // Status lines get class "msg" so they don't show up as a numbered entry.
+  if (!board) { list.innerHTML = `<li class="msg">Leaderboards need a connection.</li>`; return; }
+  list.innerHTML = `<li class="msg">Loading the leaderboard…</li>`;
   const sent = me.unsent > 0 ? board.submit(me.unsent, "inc").catch(() => null) : Promise.resolve();
   me.unsent = 0;
   sent.then(() => board.top(10)).then(({ entries }) => {
-    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : "<li>No painters yet. Be the first.</li>";
-  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score}</span></li>`).join("") : `<li class="msg">No painters yet. Be the first.</li>`;
+  }).catch(() => { list.innerHTML = `<li class="msg">Couldn't load the leaderboard.</li>`; });
 }
 $("boardBtn").onclick = showBoard;
 $("back").onclick = () => { $("over").hidden = true; };
@@ -585,7 +601,7 @@ cv.addEventListener("pointerdown", (e) => {
   if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), z: cam.z }; }
 });
 cv.addEventListener("pointermove", (e) => {
-  if (e.pointerType === "mouse") me.hover = cellAt(e.clientX, e.clientY);
+  if (e.pointerType === "mouse") me.mouse = [e.clientX, e.clientY]; // the hover square follows it every frame (see frame())
   const p = pointers.get(e.pointerId); if (!p) return;
   const dx = e.clientX - p.x, dy = e.clientY - p.y;
   p.x = e.clientX; p.y = e.clientY; p.moved += Math.abs(dx) + Math.abs(dy);
@@ -598,12 +614,12 @@ cv.addEventListener("pointermove", (e) => {
 function release(e, tap) {
   const p = pointers.get(e.pointerId); if (!p) return;
   pointers.delete(e.pointerId);
-  if (tap && !pinch && p.moved <= 8) { const [x, y] = cellAt(e.clientX, e.clientY); if (e.pointerType !== "mouse") me.hover = [x, y]; paintAt(x, y); }
+  if (tap && !pinch && p.moved <= 8) { const [x, y] = cellAt(e.clientX, e.clientY); if (e.pointerType !== "mouse" && x >= 0 && y >= 0 && x < N && y < N) me.hover = [x, y]; paintAt(x, y); }
   if (pointers.size === 0) pinch = null;
 }
 cv.addEventListener("pointerup", (e) => release(e, true));
 cv.addEventListener("pointercancel", (e) => release(e, false));
-cv.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse") me.hover = null; });
+cv.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse") me.hover = me.mouse = null; });
 cv.addEventListener("contextmenu", (e) => e.preventDefault());
 cv.addEventListener("wheel", (e) => { e.preventDefault(); zoomAt(Math.pow(1.0015, -e.deltaY), e.clientX, e.clientY); }, { passive: false });
 $("zin").onclick = () => zoomAt(1.4, W / 2, H / 2);
@@ -611,7 +627,7 @@ $("zout").onclick = () => zoomAt(1 / 1.4, W / 2, H / 2);
 addEventListener("keydown", (e) => {
   if (e.key === "+" || e.key === "=") zoomAt(1.25, W / 2, H / 2);
   if (e.key === "-") zoomAt(0.8, W / 2, H / 2);
-  if (e.key === "q" || e.key === "e") pickColor((me.color + (e.key === "e" ? 1 : 15)) % 16);
+  if (e.code === "KeyQ" || e.code === "KeyE") pickColor((me.color + (e.code === "KeyE" ? 1 : 15)) % 16); // by code: Shift or Caps Lock don't stop it
   const pan = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
   if (pan) { e.preventDefault(); cam.x += pan[0] * 60 / cam.z; cam.y += pan[1] * 60 / cam.z; clampCam(); }
 });
@@ -636,6 +652,10 @@ function frame(now) {
   if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
   if (isHost()) hostTick(dt, now); else wall.adopted = false;
   syncView(now);
+  if (me.mouse) { // the square under the mouse, also after a zoom or pan; none off the wall
+    const [x, y] = cellAt(me.mouse[0], me.mouse[1]);
+    me.hover = x >= 0 && y >= 0 && x < N && y < N ? [x, y] : null;
+  }
   if (me.hover && now - me.lastCur > 100) { // my cursor, ~10 times a second when it moves
     const cur = JSON.stringify({ x: me.hover[0], y: me.hover[1] });
     if (cur !== me.cur) { me.cur = cur; me.lastCur = now; net.me.set("cur", cur); }
